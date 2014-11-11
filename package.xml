@@ -2,7 +2,7 @@
   <name>razor_imu_9dof</name>
   <version>1.0.3</version>
   <description>
-     razor_imu_9dof is a package that provides a ROS driver 
+     razor_imu_9dof is a package that provides a ROS driver
      for the Sparkfun Razor IMU 9DOF. It also provides Arduino
      firmware that runs on the Razor board, and which must be
      installed on the Razor board for the system to work. A node
