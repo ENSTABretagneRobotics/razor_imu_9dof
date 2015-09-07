@@ -37,7 +37,7 @@ import sys
 from sensor_msgs.msg import Imu
 from tf.transformations import quaternion_from_euler
 from dynamic_reconfigure.server import Server
-from razor_imu_9dof.cfg import imuConfig
+from arduino_imu_9dof.cfg import imuConfig
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 
 degrees2rad = math.pi/180.0
@@ -52,7 +52,7 @@ def reconfig_callback(config, level):
     rospy.loginfo("Set imu_yaw_calibration to %d" % (imu_yaw_calibration))
     return config
 
-rospy.init_node("razor_node")
+rospy.init_node("imu_node")
 #We only care about the most recent measurement, i.e. queue_size=1
 pub = rospy.Publisher('imu', Imu, queue_size=1)
 srv = Server(imuConfig, reconfig_callback)  # define dynamic_reconfigure callback
@@ -99,6 +99,9 @@ imuMsg.linear_acceleration_covariance = [
 
 default_port='/dev/ttyUSB0'
 port = rospy.get_param('~port', default_port)
+
+default_baudrate=57600
+#baudrate = rospy.get_param('~baudrate', default_baudrate)
 
 #read calibration parameters
 port = rospy.get_param('~port', default_port)
@@ -147,7 +150,7 @@ pitch=0
 yaw=0
 seq=0
 accel_factor = 9.806 / 256.0    # sensor reports accel as 256.0 = 1G (9.8m/s^2). Convert to m/s^2.
-rospy.loginfo("Giving the razor IMU board 5 seconds to boot...")
+rospy.loginfo("Giving the IMU board 5 seconds to boot...")
 rospy.sleep(5) # Sleep for 5 seconds to wait for the board to boot
 
 ### configure board ###
@@ -163,7 +166,7 @@ discard = ser.readlines()
 #set output mode
 ser.write('#ox' + chr(13)) # To start display angle and sensor reading in text
 
-rospy.loginfo("Writing calibration values to razor IMU board...")
+rospy.loginfo("Writing calibration values to IMU board...")
 #set calibration values
 ser.write('#caxm' + str(accel_x_min) + chr(13))
 ser.write('#caxM' + str(accel_x_max) + chr(13))
@@ -266,7 +269,7 @@ while not rospy.is_shutdown():
         diag_arr.header.stamp = rospy.get_rostime()
         diag_arr.header.frame_id = '1'
         diag_msg = DiagnosticStatus()
-        diag_msg.name = 'Razor_Imu'
+        diag_msg.name = 'INU'
         diag_msg.level = DiagnosticStatus.OK
         diag_msg.message = 'Received AHRS measurement'
         diag_msg.values.append(KeyValue('roll (deg)',

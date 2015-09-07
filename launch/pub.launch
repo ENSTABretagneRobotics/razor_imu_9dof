@@ -1,0 +1,9 @@
+<launch>
+  <arg name="port" default="/dev/ttyACM0" />
+  <arg name="baudrate" default="57600" />
+  <node pkg="arduino_imu_9dof" type="imu_node.py" name="imu_node" output="screen">
+    <rosparam file="$(find arduino_imu_9dof)/config/arduino_board_with_pololu_imu.yaml" command="load"/>
+    <param name="port" value="$(arg port)"/>    
+    <param name="baudrate" value="$(arg baudrate)"/>    
+  </node>
+</launch>

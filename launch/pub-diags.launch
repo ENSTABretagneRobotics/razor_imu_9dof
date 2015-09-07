@@ -1,6 +1,8 @@
 <launch>
-    <node pkg="razor_imu_9dof" type="imu_node.py" name="imu_node" output="screen">
+    <arg name="port" default="/dev/ttyACM0" />
+    <node pkg="arduino_imu_9dof" type="imu_node.py" name="imu_node" output="screen">
         <rosparam file="$(find razor_imu_9dof)/config/my_razor.yaml" command="load"/>
+        <param name="port" value="$(arg port)"/>  
     </node>
 
     <node pkg="diagnostic_aggregator" type="aggregator_node" name="diagnostic_aggregator"  clear_params="true">

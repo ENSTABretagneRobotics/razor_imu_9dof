@@ -1,0 +1,10 @@
+<launch>  
+  <arg name="port" default="/dev/ttyACM0" />
+  <arg name="baudrate" default="57600" />
+  
+   <include file="$(find arduino_imu_9dof)/launch/pub.launch" >
+        <arg name="port" value="$(arg port)" />
+        <arg name="baudrate" value="$(arg baudrate)" />
+   </include>
+   <include file="$(find arduino_imu_9dof)/launch/display.launch" />
+</launch>
