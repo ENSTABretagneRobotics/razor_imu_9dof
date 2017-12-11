@@ -73,6 +73,19 @@ Publisher only with diagnostics:
 
 	$ roslaunch razor_imu_9dof razor-display.launch
 
+Conventions
+-----------
+
+The IMU follows ENU Convention.
+East  = 0 degree
+North = 90 degree
+West  = 180 degree / -180 degree
+South = -90 degree
+This standard is in lines with ROS REP 105. This driver can be used for direct interfacing with robot_localization node.
+
+The setup used is shown below for reference
+
+![alt text](https://raw.githubusercontent.com/blmhemu/razor_imu_9dof/indigo-devel/razor.png)
 
 Calibrate
 ---------
