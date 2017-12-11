@@ -9,14 +9,17 @@ Install and Configure ROS Package
 ---------------------------------
 1) Install dependencies:
 
-	$ sudo apt-get install python-visual
+	``$ sudo apt-get install python-visual``
 
 2) Download code:
 
-	$ cd ~/catkin_workspace/src
-	$ git clone https://github.com/KristofRobot/razor_imu_9dof.git
-	$ cd ..
-	$ catkin_make
+	``$ cd ~/catkin_workspace/src``
+
+	``$ git clone https://github.com/blmhemu/razor_imu_9dof.git``
+
+	``$ cd ..``
+	
+	``$ catkin_make``
 
 
 Install Arduino firmware
