@@ -77,10 +77,17 @@ Conventions
 -----------
 
 The IMU follows ENU Convention.
+
 East  = 0 degree
+
 North = 90 degree
+
 West  = 180 degree / -180 degree
+
 South = -90 degree
+
+Accelerations and angular accelerations are also taken care of. (Right Hand Rule)
+
 This standard is in lines with ROS REP 105. This driver can be used for direct interfacing with robot_localization node.
 
 The setup used is shown below for reference
