@@ -98,7 +98,6 @@ imuMsg.linear_acceleration_covariance = [
 ]
 
 default_port='/dev/ttyUSB0'
-port = rospy.get_param('~port', default_port)
 
 #read calibration parameters
 port = rospy.get_param('~port', default_port)
@@ -127,6 +126,9 @@ imu_yaw_calibration = rospy.get_param('~imu_yaw_calibration', 0.0)
 gyro_average_offset_x = rospy.get_param('~gyro_average_offset_x', 0.0)
 gyro_average_offset_y = rospy.get_param('~gyro_average_offset_y', 0.0)
 gyro_average_offset_z = rospy.get_param('~gyro_average_offset_z', 0.0)
+
+# frame_id
+frame_id = rospy.get_param('~frame_id', 'base_imu_link')
 
 #rospy.loginfo("%f %f %f %f %f %f", accel_x_min, accel_x_max, accel_y_min, accel_y_max, accel_z_min, accel_z_max)
 #rospy.loginfo("%f %f %f %f %f %f", magn_x_min, magn_x_max, magn_y_min, magn_y_max, magn_z_min, magn_z_max)
@@ -158,7 +160,7 @@ ser.write('#o0' + chr(13))
 #automatic flush - NOT WORKING
 #ser.flushInput()  #discard old input, still in invalid format
 #flush manually, as above command is not working
-discard = ser.readlines() 
+discard = ser.readlines()
 
 #set output mode
 ser.write('#ox' + chr(13)) # To start display angle and sensor reading in text
@@ -246,7 +248,7 @@ while not rospy.is_shutdown():
         imuMsg.angular_velocity.x = float(words[6])
         #in AHRS firmware y axis points right, in ROS y axis points left (see REP 103)
         imuMsg.angular_velocity.y = -float(words[7])
-        #in AHRS firmware z axis points down, in ROS z axis points up (see REP 103) 
+        #in AHRS firmware z axis points down, in ROS z axis points up (see REP 103)
         imuMsg.angular_velocity.z = -float(words[8])
 
     q = quaternion_from_euler(roll,pitch,yaw)
@@ -255,7 +257,7 @@ while not rospy.is_shutdown():
     imuMsg.orientation.z = q[2]
     imuMsg.orientation.w = q[3]
     imuMsg.header.stamp= rospy.Time.now()
-    imuMsg.header.frame_id = 'base_imu_link'
+    imuMsg.header.frame_id = frame_id
     imuMsg.header.seq = seq
     seq = seq + 1
     pub.publish(imuMsg)
@@ -278,6 +280,6 @@ while not rospy.is_shutdown():
         diag_msg.values.append(KeyValue('sequence number', str(seq)))
         diag_arr.status.append(diag_msg)
         diag_pub.publish(diag_arr)
-        
+
 ser.close
 #f.close
