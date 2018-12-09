@@ -35,3 +35,11 @@ gyro_average_offset_z: 0.0
 
 # frame_id for IMU message
 frame_id: base_imu_link
+
+# Remove acceleration biases
+remove_x_accel_bias: False
+remove_y_accel_bias: True
+remove_z_accel_bias: True
+
+# threshold under which acceleration values go to 0
+thresh: 0.1

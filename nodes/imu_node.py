@@ -130,6 +130,12 @@ gyro_average_offset_z = rospy.get_param('~gyro_average_offset_z', 0.0)
 # frame_id
 frame_id = rospy.get_param('~frame_id', 'base_imu_link')
 
+# remove acceleration biases
+remove_x_accel_bias = rospy.get_param('~x_bias', False)
+remove_y_accel_bias = rospy.get_param('~y_bias', False)
+remove_z_accel_bias = rospy.get_param('~z_bias', False)
+thresh = rospy.get_param('~thresh', 0.0)
+
 #rospy.loginfo("%f %f %f %f %f %f", accel_x_min, accel_x_max, accel_y_min, accel_y_max, accel_z_min, accel_z_max)
 #rospy.loginfo("%f %f %f %f %f %f", magn_x_min, magn_x_max, magn_y_min, magn_y_max, magn_z_min, magn_z_max)
 #rospy.loginfo("%s %s %s", str(calibration_magn_use_extended), str(magn_ellipsoid_center), str(magn_ellipsoid_transform[0][0]))
@@ -149,6 +155,9 @@ pitch=0
 yaw=0
 seq=0
 accel_factor = 9.806 / 256.0    # sensor reports accel as 256.0 = 1G (9.8m/s^2). Convert to m/s^2.
+x_bias = 0
+y_bias = 0
+z_bias = 0
 rospy.loginfo("Giving the razor IMU board 5 seconds to boot...")
 rospy.sleep(5) # Sleep for 5 seconds to wait for the board to boot
 
@@ -220,6 +229,27 @@ for x in range(0, 200):
 rospy.loginfo("Publishing IMU data...")
 #f = open("raw_imu_data.log", 'w')
 
+if remove_x_accel_bias or remove_y_accel_bias or remove_z_accel_bias:
+    rospy.loginfo("Calculating acceleration bias")
+    for x in range(0, 200):
+        line = ser.readline()
+        line = line.replace("#YPRAG=","")
+        words = string.split(line,",")
+        if len(words) > 2:
+            if remove_x_accel_bias:
+                x_bias += float(words[3])
+            if remove_y_accel_bias:
+                y_bias += float(words[4])
+            if remove_z_accel_bias:
+                z_bias += float(words[5])
+    x_bias = x_bias/200
+    y_bias = y_bias/200
+    z_bias = z_bias/200
+
+    rospy.loginfo("Bias values:\r\n x_bias: %.3f\r\ny_bias: %.3f\r\nz_bias: %.3f\r\n", x_bias, y_bias, z_bias)
+
+
+
 while not rospy.is_shutdown():
     line = ser.readline()
     line = line.replace("#YPRAG=","")   # Delete "#YPRAG="
@@ -238,12 +268,15 @@ while not rospy.is_shutdown():
         pitch = -float(words[1])*degrees2rad
         roll = float(words[2])*degrees2rad
 
+        accel_x = (-float(words[3]) + x_bias) * accel_factor
+        accel_y = (float(words[4]) - y_bias) * accel_factor
+        accel_z = (float(words[5]) - z_bias) * accel_factor
         # Publish message
         # AHRS firmware accelerations are negated
         # This means y and z are correct for ROS, but x needs reversing
-        imuMsg.linear_acceleration.x = -float(words[3]) * accel_factor
-        imuMsg.linear_acceleration.y = float(words[4]) * accel_factor
-        imuMsg.linear_acceleration.z = float(words[5]) * accel_factor
+        imuMsg.linear_acceleration.x = accel_x if abs(accel_x) >= thresh else 0
+        imuMsg.linear_acceleration.y = accel_y if abs(accel_y) >= thresh else 0
+        imuMsg.linear_acceleration.z = accel_z if abs(accel_z) >= thresh else 0
 
         imuMsg.angular_velocity.x = float(words[6])
         #in AHRS firmware y axis points right, in ROS y axis points left (see REP 103)
