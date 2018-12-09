@@ -226,7 +226,6 @@ ser.write('#o1' + chr(13))
 rospy.loginfo("Flushing first 200 IMU entries...")
 for x in range(0, 200):
     line = ser.readline()
-rospy.loginfo("Publishing IMU data...")
 #f = open("raw_imu_data.log", 'w')
 
 if remove_x_accel_bias or remove_y_accel_bias or remove_z_accel_bias:
@@ -248,7 +247,7 @@ if remove_x_accel_bias or remove_y_accel_bias or remove_z_accel_bias:
 
     rospy.loginfo("Bias values:\r\n x_bias: %.3f\r\ny_bias: %.3f\r\nz_bias: %.3f\r\n", x_bias, y_bias, z_bias)
 
-
+rospy.loginfo("Publishing IMU data...")
 
 while not rospy.is_shutdown():
     line = ser.readline()
