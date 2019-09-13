@@ -2,6 +2,10 @@
 Changelog for package razor_imu_9dof
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+1.2.0 (20-12-2017)
+------------------
+* Adding firmware support for SEN-14001 (9DoF Razor IMU M0) (lebarsfa)
+
 1.1.1 (02-07-2016)
 ------------------
 * Passing razor_config_file as ros parameter in launch file (Daniel Koguciuk)

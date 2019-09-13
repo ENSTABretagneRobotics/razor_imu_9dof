@@ -1,5 +1,5 @@
 /***************************************************************************************************************
-* Razor AHRS Firmware v1.4.2.2
+* Razor AHRS Firmware
 * 9 Degree of Measurement Attitude and Heading Reference System
 * for Sparkfun "9DOF Razor IMU" (SEN-10125 and SEN-10736)
 * and "9DOF Sensor Stick" (SEN-10183, 10321 and SEN-10724)
@@ -41,18 +41,43 @@
 *       * Added support for SparkFun "9DOF Sensor Stick" (versions SEN-10183, SEN-10321 and SEN-10724).
 *     * v1.4.1
 *       * Added output modes to read raw and/or calibrated sensor data in text or binary format.
-*       * Added static magnetometer soft iron distortion compensation
+*       * Added static magnetometer soft iron distortion compensation.
 *     * v1.4.2
 *       * (No core firmware changes)
-*     * v1.4.2.1
-*       * New output mode to support ROS Imu use emits YPR + accel + rot. vel.
-*     * v1.4.2.2
-*       * New input mode to set calibration parameters
+*     * v1.5
+*       * Added support for "9DoF Razor IMU M0": SEN-14001.
+*     * v1.5.1
+*       * Added ROS-compatible output mode.
+*     * v1.5.2
+*       * Added ROS-compatible input mode to set calibration parameters.
+*     * v1.5.3
+*       * Fixed the problem where commands were ignored by the M0 depending on how they were sent.
+*     * v1.5.4
+*       * Attempts to fix random nan problems in orientation computations.
+*       * Added an option to get yaw/pitch/roll from the M0 DMP.
+*       * Added a command to enable/disable the use of magnetometers for yaw computation.
+*     * v1.5.5
+*       * Added various options to determine the most stable configuration for the M0.
+*     * v1.5.6
+*       * Removed some unnecessary math error checking.
+*       * Set back gyro full-scale range to the maximum for the M0.
+*       * Increased startup delay to try to get a correct initial orientation for the M0.
+*     * v1.5.7
+*       * Calibration data are now also used to compute the initial orientation.
 *
 * TODOs:
-*   * Allow optional use of EEPROM for storing and reading calibration values.
+*   * Allow optional use of Flash/EEPROM for storing and reading calibration values.
 *   * Use self-test and temperature-compensation features of the sensors.
 ***************************************************************************************************************/
+
+/*
+  "9DoF Razor IMU M0" hardware versions: SEN-14001
+
+  Arduino IDE : Follow the same instructions as for the default firmware on 
+  https://learn.sparkfun.com/tutorials/9dof-razor-imu-m0-hookup-guide 
+  and use an updated version of SparkFun_MPU-9250-DMP_Arduino_Library from 
+  https://github.com/lebarsfa/SparkFun_MPU-9250-DMP_Arduino_Library"
+*/
 
 /*
   "9DOF Razor IMU" hardware versions: SEN-10125 and SEN-10736
@@ -93,11 +118,13 @@
   Serial commands that the firmware understands:
   
   "#c<params>" - SET _c_alibration parameters. The available options are:
-    [a|m|g|c|t] _a_ccelerometer, _m_agnetometer, _g_yro, magnetometerellipsoid_c_enter, magnetometerellipsoid_t_ransform
-    [x|y|z] x,y or z 
-    [m|M|X|Y|Z] _m_in or _M_ax (accel or magnetometer), X, Y, or Z of transform (magnetometerellipsoid_t_ransform)
+    [a|m|g|c|t] _a_ccelerometer, _m_agnetometer, _g_yro, magnetometerellipsoid_c_enter, magnetometerellipsoid_t_ransform.
+    [x|y|z] x,y or z.
+    [m|M|X|Y|Z] _m_in or _M_ax (accel or magnetometer), X, Y, or Z of transform (magnetometerellipsoid_t_ransform).
 
-  "#p" - PRINT current calibration values
+
+  "#p" - PRINT current calibration values.
+
 
   "#o<params>" - Set OUTPUT mode and parameters. The available options are:
   
@@ -113,9 +140,10 @@
       "#ox" - Output angles and linear acceleration and rotational
               velocity. Angles are in degrees, acceleration is
               in units of 1.0 = 1/256 G (9.8/256 m/s^2). Rotational
-              velocity is in rad/s^2. (Output frames have form like
+              velocity is in rad/s. (Output frames have form like
               "#YPRAG=-142.28,-5.38,33.52,0.1,0.1,1.0,0.01,0.01,0.01",
               followed by carriage return and line feed [\r\n]).
+     
       // Sensor calibration
       "#oc" - Go to CALIBRATION output mode.
       "#on" - When in calibration mode, go on to calibrate NEXT sensor.
@@ -139,20 +167,25 @@
       // Error message output        
       "#oe0" - Disable ERROR message output.
       "#oe1" - Enable ERROR message output.
-    
-    
+      "#oec" - Output ERROR COUNT.
+      "#oem" - Output MATH ERROR COUNT.
+
+
+  "#I" - Toggle INERTIAL-only mode for yaw computation.
+
+
   "#f" - Request one output frame - useful when continuous output is disabled and updates are
          required in larger intervals only. Though #f only requests one reply, replies are still
          bound to the internal 20ms (50Hz) time raster. So worst case delay that #f can add is 19.99ms.
-         
-         
+ 
+  
   "#s<xy>" - Request synch token - useful to find out where the frame boundaries are in a continuous
          binary stream or to see if tracker is present and answering. The tracker will send
          "#SYNCH<xy>\r\n" in response (so it's possible to read using a readLine() function).
          x and y are two mandatory but arbitrary bytes that can be used to find out which request
          the answer belongs to.
-          
-          
+
+
   ("#C" and "#D" - Reserved for communication with optional Bluetooth module.)
   
   Newline characters are not required. So you could send "#ob#o1#s", which
@@ -175,6 +208,7 @@
 // Select your hardware here by uncommenting one line!
 //#define HW__VERSION_CODE 10125 // SparkFun "9DOF Razor IMU" version "SEN-10125" (HMC5843 magnetometer)
 //#define HW__VERSION_CODE 10736 // SparkFun "9DOF Razor IMU" version "SEN-10736" (HMC5883L magnetometer)
+//#define HW__VERSION_CODE 14001 // SparkFun "9DoF Razor IMU M0" version "SEN-14001"
 //#define HW__VERSION_CODE 10183 // SparkFun "9DOF Sensor Stick" version "SEN-10183" (HMC5843 magnetometer)
 //#define HW__VERSION_CODE 10321 // SparkFun "9DOF Sensor Stick" version "SEN-10321" (HMC5843 magnetometer)
 //#define HW__VERSION_CODE 10724 // SparkFun "9DOF Sensor Stick" version "SEN-10724" (HMC5883L magnetometer)
@@ -184,6 +218,13 @@
 /*****************************************************************/
 // Set your serial port baud rate used to send out data here!
 #define OUTPUT__BAUD_RATE 57600
+#if HW__VERSION_CODE == 14001
+// Set your port used to send out data here!
+#define LOG_PORT SERIAL_PORT_USBVIRTUAL
+#else
+// Set your port used to send out data here!
+#define LOG_PORT Serial
+#endif // HW__VERSION_CODE
 
 // Sensor data output interval in milliseconds
 // This may not work, if faster than 20ms (=50Hz)
@@ -206,7 +247,7 @@ int output_mode = OUTPUT__MODE_ANGLES;
 int output_format = OUTPUT__FORMAT_TEXT;
 
 // Select if serial continuous streaming output is enabled per default on startup.
-#define OUTPUT__STARTUP_STREAM_ON false  // true or false
+#define OUTPUT__STARTUP_STREAM_ON true  // true or false
 
 // If set true, an error message will be output if we fail to read sensor data.
 // Message format: "!ERR: reading <sensor>", followed by "\r\n".
@@ -228,6 +269,7 @@ boolean output_errors = false;  // true or false
 /*****************************************************************/
 // How to calibrate? Read the tutorial at http://dev.qu.tu-berlin.de/projects/sf-razor-9dof-ahrs
 // Put MIN/MAX and OFFSET readings for your board here!
+// For the M0, only the extended magnetometer calibration seems to be really necessary if DEBUG__USE_DMP_M0 is set to true...
 // Accelerometer
 // "accel x,y,z (min/max) = X_MIN/X_MAX  Y_MIN/Y_MAX  Z_MIN/Z_MAX"
 float ACCEL_X_MIN = -250;
@@ -258,13 +300,67 @@ float GYRO_AVERAGE_OFFSET_X = 0.0;
 float GYRO_AVERAGE_OFFSET_Y = 0.0;
 float GYRO_AVERAGE_OFFSET_Z = 0.0;
 
+/*
+// Calibration example:
+
+// "accel x,y,z (min/max) = -277.00/264.00  -256.00/278.00  -299.00/235.00"
+float ACCEL_X_MIN = -277;
+float ACCEL_X_MAX = 264;
+float ACCEL_Y_MIN = -256;
+float ACCEL_Y_MAX = 278;
+float ACCEL_Z_MIN = -299;
+float ACCEL_Z_MAX = 235;
+
+// "magn x,y,z (min/max) = -511.00/581.00  -516.00/568.00  -489.00/486.00"
+float MAGN_X_MIN = -511;
+float MAGN_X_MAX = 581;
+float MAGN_Y_MIN = -516;
+float MAGN_Y_MAX = 568;
+float MAGN_Z_MIN = -489;
+float MAGN_Z_MAX = 486;
+
+// Extended magn
+boolean CALIBRATION__MAGN_USE_EXTENDED = true;
+float magn_ellipsoid_center[3] = {91.5, -13.5, -48.1};
+float magn_ellipsoid_transform[3][3] = {{0.902, -0.00354, 0.000636}, {-0.00354, 0.9, -0.00599}, {0.000636, -0.00599, 1}};
+
+// Extended magn (with Sennheiser HD 485 headphones)
+//boolean CALIBRATION__MAGN_USE_EXTENDED = true;
+//float magn_ellipsoid_center[3] = {72.3360, 23.0954, 53.6261};
+//float magn_ellipsoid_transform[3][3] = {{0.879685, 0.000540833, -0.0106054}, {0.000540833, 0.891086, -0.0130338}, {-0.0106054, -0.0130338, 0.997494}};
+
+//"gyro x,y,z (current/average) = -40.00/-42.05  98.00/96.20  -18.00/-18.36"
+float GYRO_AVERAGE_OFFSET_X = -42.05;
+float GYRO_AVERAGE_OFFSET_Y = 96.20;
+float GYRO_AVERAGE_OFFSET_Z = -18.36;
+*/
+
 
 // DEBUG OPTIONS
 /*****************************************************************/
 // When set to true, gyro drift correction will not be applied
-#define DEBUG__NO_DRIFT_CORRECTION false
+boolean DEBUG__NO_DRIFT_CORRECTION = false;
 // Print elapsed time after each I/O loop
 #define DEBUG__PRINT_LOOP_TIME false
+
+#define DEBUG__PRINT_LOOP_TIME_2 false
+
+#define DEBUG__ADD_LOOP_DELAY false
+
+#define DEBUG__LOOP_DELAY 1
+// Set to true to enable auto-calibration features of the M0 (does not apply to magnetometers)
+#define DEBUG__USE_DMP_M0 false
+// Set to true to disable the use of the DCM algorithm
+#define DEBUG__USE_ONLY_DMP_M0 false
+
+#define DEBUG__ENABLE_FIFO_M0 false
+
+#define DEBUG__ENABLE_INTERRUPT_M0 false
+
+#define DEBUG__USE_DEFAULT_GYRO_FSR_M0 false
+
+#define DEBUG__USE_DEFAULT_ACCEL_FSR_M0 false
+
 
 
 /*****************************************************************/
@@ -286,7 +382,34 @@ float GYRO_AVERAGE_OFFSET_Z = 0.0;
   #error YOU HAVE TO SELECT THE HARDWARE YOU ARE USING! See "HARDWARE OPTIONS" in "USER SETUP AREA" at top of Razor_AHRS.ino!
 #endif
 
+#if HW__VERSION_CODE == 14001
+// MPU-9250 Digital Motion Processing (DMP) Library
+#include <SparkFunMPU9250-DMP.h>
+
+// Danger - don't change unless using a different platform
+#define MPU9250_INT_PIN 4
+#define SD_CHIP_SELECT_PIN 38
+#define MPU9250_INT_ACTIVE LOW
+
+MPU9250_DMP imu; // Create an instance of the MPU9250_DMP class
+
+#if DEBUG__USE_ONLY_DMP_M0 == true
+#undef DEBUG__USE_DMP_M0
+#define DEBUG__USE_DMP_M0 true
+#endif // DEBUG__USE_ONLY_DMP_M0
+
+#if DEBUG__USE_DMP_M0 == true
+#undef DEBUG__ENABLE_FIFO_M0
+#define DEBUG__ENABLE_FIFO_M0 true
+#endif // DEBUG__USE_DMP_M0
+
+#if DEBUG__USE_ONLY_DMP_M0 == true
+float initialmagyaw = -10000;
+float initialimuyaw = -10000;
+#endif // DEBUG__USE_ONLY_DMP_M0
+#else
 #include <Wire.h>
+#endif // HW__VERSION_CODE
 
 #define GRAVITY 256.0f // "1G reference" used for DCM filter and accelerometer calibration
 
@@ -306,9 +429,14 @@ float MAGN_Y_SCALE = (100.0f / (MAGN_Y_MAX - MAGN_Y_OFFSET));
 float MAGN_Z_SCALE = (100.0f / (MAGN_Z_MAX - MAGN_Z_OFFSET));
 
 
+
+#if HW__VERSION_CODE == 14001
+#define GYRO_SCALED_RAD(x) (x) // Calculate the scaled gyro readings in radians per second
+#else
 // Gain for gyroscope (ITG-3200)
 #define GYRO_GAIN 0.06957 // Same gain on all axes
 #define GYRO_SCALED_RAD(x) (x * TO_RAD(GYRO_GAIN)) // Calculate the scaled gyro readings in radians per second
+#endif // HW__VERSION_CODE
 
 // DCM parameters
 #define Kp_ROLLPITCH 0.02f
@@ -322,21 +450,21 @@ float MAGN_Z_SCALE = (100.0f / (MAGN_Z_MAX - MAGN_Z_OFFSET));
 #define TO_DEG(x) (x * 57.2957795131)  // *180/pi
 
 // Sensor variables
-float accel[3];  // Actually stores the NEGATED acceleration (equals gravity, if board not moving).
-float accel_min[3];
-float accel_max[3];
+float accel[3] = {0, 0, 0}; // Actually stores the NEGATED acceleration (equals gravity, if board not moving).
+float accel_min[3] = {0, 0, 0};
+float accel_max[3] = {0, 0, 0};
 
-float magnetom[3];
-float magnetom_min[3];
-float magnetom_max[3];
-float magnetom_tmp[3];
+float magnetom[3] = {0, 0, 0};
+float magnetom_min[3] = {0, 0, 0};
+float magnetom_max[3] = {0, 0, 0};
+float magnetom_tmp[3] = {0, 0, 0};
 
-float gyro[3];
-float gyro_average[3];
+float gyro[3] = {0, 0, 0};
+float gyro_average[3] = {0, 0, 0};
 int gyro_num_samples = 0;
 
 // DCM variables
-float MAG_Heading;
+float MAG_Heading = 0;
 float Accel_Vector[3]= {0, 0, 0}; // Store the acceleration in a vector
 float Gyro_Vector[3]= {0, 0, 0}; // Store the gyros turn rate in a vector
 float Omega_Vector[3]= {0, 0, 0}; // Corrected Gyro_Vector data
@@ -350,32 +478,37 @@ float Update_Matrix[3][3] = {{0, 1, 2}, {3, 4, 5}, {6, 7, 8}};
 float Temporary_Matrix[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
 // Euler angles
-float yaw;
-float pitch;
-float roll;
+float yaw = 0;
+float pitch = 0;
+float roll = 0;
 
 // DCM timing in the main loop
-unsigned long timestamp;
-unsigned long timestamp_old;
-float G_Dt; // Integration time for DCM algorithm
+unsigned long timestamp = 0;
+unsigned long timestamp_old = 0;
+float G_Dt = 0; // Integration time for DCM algorithm
 
 // More output-state variables
-boolean output_stream_on;
-boolean output_single_on;
+boolean output_stream_on = false;
+boolean output_single_on = false;
 int curr_calibration_sensor = 0;
 boolean reset_calibration_session_flag = true;
 int num_accel_errors = 0;
 int num_magn_errors = 0;
 int num_gyro_errors = 0;
+int num_math_errors = 0;
 
 void read_sensors() {
+#if HW__VERSION_CODE == 14001
+  loop_imu();
+#else
   Read_Gyro(); // Read gyroscope
   Read_Accel(); // Read accelerometer
   Read_Magn(); // Read magnetometer
+#endif // HW__VERSION_CODE
 }
 
-//should be called after every #ca calibration command
-void recalculateAccelCalibration(){
+// Should be called after every #ca calibration command
+void recalculateAccelCalibration() {
   ACCEL_X_OFFSET = ((ACCEL_X_MIN + ACCEL_X_MAX) / 2.0f);
   ACCEL_Y_OFFSET = ((ACCEL_Y_MIN + ACCEL_Y_MAX) / 2.0f);
   ACCEL_Z_OFFSET = ((ACCEL_Z_MIN + ACCEL_Z_MAX) / 2.0f);
@@ -384,8 +517,8 @@ void recalculateAccelCalibration(){
   ACCEL_Z_SCALE = (GRAVITY / (ACCEL_Z_MAX - ACCEL_Z_OFFSET));
 }
 
-//should be called after every #cm calibration command
-void recalculateMagnCalibration(){
+// Should be called after every #cm calibration command
+void recalculateMagnCalibration() {
   MAGN_X_OFFSET = ((MAGN_X_MIN + MAGN_X_MAX) / 2.0f);
   MAGN_Y_OFFSET = ((MAGN_Y_MIN + MAGN_Y_MAX) / 2.0f);
   MAGN_Z_OFFSET = ((MAGN_Z_MIN + MAGN_Z_MAX) / 2.0f);
@@ -394,15 +527,43 @@ void recalculateMagnCalibration(){
   MAGN_Z_SCALE = (100.0f / (MAGN_Z_MAX - MAGN_Z_OFFSET));
 }
 
+// Apply calibration to raw sensor readings
+void compensate_sensor_errors() {
+    // Compensate accelerometer error
+    accel[0] = (accel[0] - ACCEL_X_OFFSET) * ACCEL_X_SCALE;
+    accel[1] = (accel[1] - ACCEL_Y_OFFSET) * ACCEL_Y_SCALE;
+    accel[2] = (accel[2] - ACCEL_Z_OFFSET) * ACCEL_Z_SCALE;
+
+    // Compensate magnetometer error
+    if (CALIBRATION__MAGN_USE_EXTENDED)
+    {
+      for (int i = 0; i < 3; i++)
+        magnetom_tmp[i] = magnetom[i] - magn_ellipsoid_center[i];
+      Matrix_Vector_Multiply(magn_ellipsoid_transform, magnetom_tmp, magnetom);
+    } 
+    else 
+    {
+      magnetom[0] = (magnetom[0] - MAGN_X_OFFSET) * MAGN_X_SCALE;
+      magnetom[1] = (magnetom[1] - MAGN_Y_OFFSET) * MAGN_Y_SCALE;
+      magnetom[2] = (magnetom[2] - MAGN_Z_OFFSET) * MAGN_Z_SCALE;
+    }
+
+    // Compensate gyroscope error
+    gyro[0] -= GYRO_AVERAGE_OFFSET_X;
+    gyro[1] -= GYRO_AVERAGE_OFFSET_Y;
+    gyro[2] -= GYRO_AVERAGE_OFFSET_Z;
+}
+
 // Read every sensor and record a time stamp
 // Init DCM with unfiltered orientation
 // TODO re-init global vars?
 void reset_sensor_fusion() {
-  float temp1[3];
-  float temp2[3];
-  float xAxis[] = {1.0f, 0.0f, 0.0f};
+  float temp1[3] = {0, 0, 0};
+  float temp2[3] = {0, 0, 0};
+  float xAxis[3] = {1, 0, 0};
 
   read_sensors();
+  compensate_sensor_errors();
   timestamp = millis();
   
   // GET PITCH
@@ -424,30 +585,6 @@ void reset_sensor_fusion() {
   
   // Init rotation matrix
   init_rotation_matrix(DCM_Matrix, yaw, pitch, roll);
-}
-
-// Apply calibration to raw sensor readings
-void compensate_sensor_errors() {
-  // Compensate accelerometer error
-  accel[0] = (accel[0] - ACCEL_X_OFFSET) * ACCEL_X_SCALE;
-  accel[1] = (accel[1] - ACCEL_Y_OFFSET) * ACCEL_Y_SCALE;
-  accel[2] = (accel[2] - ACCEL_Z_OFFSET) * ACCEL_Z_SCALE;
-  
-  // Compensate magnetometer error
-  if (CALIBRATION__MAGN_USE_EXTENDED){
-    for (int i = 0; i < 3; i++)
-      magnetom_tmp[i] = magnetom[i] - magn_ellipsoid_center[i];
-    Matrix_Vector_Multiply(magn_ellipsoid_transform, magnetom_tmp, magnetom);
-  }else{
-    magnetom[0] = (magnetom[0] - MAGN_X_OFFSET) * MAGN_X_SCALE;
-    magnetom[1] = (magnetom[1] - MAGN_Y_OFFSET) * MAGN_Y_SCALE;
-    magnetom[2] = (magnetom[2] - MAGN_Z_OFFSET) * MAGN_Z_SCALE;
-  }
-  
-  // Compensate gyroscope error
-  gyro[0] -= GYRO_AVERAGE_OFFSET_X;
-  gyro[1] -= GYRO_AVERAGE_OFFSET_Y;
-  gyro[2] -= GYRO_AVERAGE_OFFSET_Z;
 }
 
 // Reset calibration session if reset_calibration_session_flag is set
@@ -486,14 +623,14 @@ void turn_output_stream_off()
 // Blocks until another byte is available on serial port
 char readChar()
 {
-  while (Serial.available() < 1) { } // Block
-  return Serial.read();
+  while (LOG_PORT.available() < 1) { } // Block
+  return LOG_PORT.read();
 }
 
 void setup()
 {
   // Init serial output
-  Serial.begin(OUTPUT__BAUD_RATE);
+  LOG_PORT.begin(OUTPUT__BAUD_RATE);
   
   // Init status LED
   pinMode (STATUS_LED_PIN, OUTPUT);
@@ -501,13 +638,25 @@ void setup()
 
   // Init sensors
   delay(50);  // Give sensors enough time to start
+#if HW__VERSION_CODE == 14001
+#if DEBUG__ENABLE_INTERRUPT_M0 == true
+  // Set up MPU-9250 interrupt input (active-low)
+  pinMode(MPU9250_INT_PIN, INPUT_PULLUP);
+#endif // DEBUG__ENABLE_INTERRUPT_M0
+  initIMU();
+#else
   I2C_Init();
   Accel_Init();
   Magn_Init();
   Gyro_Init();
+#endif // HW__VERSION_CODE
   
   // Read sensors, init DCM algorithm
+#if HW__VERSION_CODE == 14001
+  delay(400);  // Give sensors enough time to collect data
+#else
   delay(20);  // Give sensors enough time to collect data
+#endif // HW__VERSION_CODE
   reset_sensor_fusion();
 
   // Init output
@@ -522,11 +671,21 @@ void setup()
 void loop()
 {
   // Read incoming control messages
-  if (Serial.available() >= 2)
+ #if HW__VERSION_CODE == 14001
+  // Compatibility fix : if bytes are sent 1 by 1 without being read, available() might never return more than 1...
+  // Therefore, we need to read bytes 1 by 1 and the command byte needs to be a blocking read...
+  if (LOG_PORT.available() >= 1)
   {
-    if (Serial.read() == '#') // Start of new control message
+    if (LOG_PORT.read() == '#') // Start of new control message
     {
-      int command = Serial.read(); // Commands
+      int command = readChar(); // Commands
+#else
+  if (LOG_PORT.available() >= 2)
+  {
+    if (LOG_PORT.read() == '#') // Start of new control message
+    {
+      int command = LOG_PORT.read(); // Commands
+#endif // HW__VERSION_CODE
       if (command == 'f') // request one output _f_rame
         output_single_on = true;
       else if (command == 's') // _s_ynch request
@@ -537,9 +696,9 @@ void loop()
         id[1] = readChar();
         
         // Reply with synch message
-        Serial.print("#SYNCH");
-        Serial.write(id, 2);
-        Serial.println();
+        LOG_PORT.print("#SYNCH");
+        LOG_PORT.write(id, 2);
+        LOG_PORT.println();
       }
       else if (command == 'o') // Set _o_utput mode
       {
@@ -564,10 +723,10 @@ void loop()
           output_mode = OUTPUT__MODE_CALIBRATE_SENSORS;
           reset_calibration_session_flag = true;
         }
-        else if (output_param == 'x') // Go to _c_alibration mode for both sensor and angle comment: Tang
+        else if (output_param == 'x') // Output angles + accel + rot. vel as te_x_t
         {
           output_mode = OUTPUT__MODE_ANGLES_AG_SENSORS;
-          reset_calibration_session_flag = true;
+          output_format = OUTPUT__FORMAT_TEXT;
         }
         else if (output_param == 's') // Output _s_ensor values
         {
@@ -600,63 +759,68 @@ void loop()
           char error_param = readChar();
           if (error_param == '0') output_errors = false;
           else if (error_param == '1') output_errors = true;
-          else if (error_param == 'c') // get error count
+          else if (error_param == 'c') // get error _c_ount
           {
-            Serial.print("#AMG-ERR:");
-            Serial.print(num_accel_errors); Serial.print(",");
-            Serial.print(num_magn_errors); Serial.print(",");
-            Serial.println(num_gyro_errors);
+            LOG_PORT.print("#AMG-ERR:");
+            LOG_PORT.print(num_accel_errors); LOG_PORT.print(",");
+            LOG_PORT.print(num_magn_errors); LOG_PORT.print(",");
+            LOG_PORT.println(num_gyro_errors);
+          }
+          else if (error_param == 'm') // get _m_ath error count
+          {
+            LOG_PORT.print("#MATH-ERR:");
+            LOG_PORT.println(num_math_errors);
           }
         }
       }
       else if (command == 'p') // Set _p_rint calibration values
       {
-         Serial.print("ACCEL_X_MIN:");Serial.println(ACCEL_X_MIN);
-         Serial.print("ACCEL_X_MAX:");Serial.println(ACCEL_X_MAX);
-         Serial.print("ACCEL_Y_MIN:");Serial.println(ACCEL_Y_MIN);
-         Serial.print("ACCEL_Y_MAX:");Serial.println(ACCEL_Y_MAX);
-         Serial.print("ACCEL_Z_MIN:");Serial.println(ACCEL_Z_MIN);
-         Serial.print("ACCEL_Z_MAX:");Serial.println(ACCEL_Z_MAX);
-         Serial.println(""); 
-         Serial.print("MAGN_X_MIN:");Serial.println(MAGN_X_MIN);
-         Serial.print("MAGN_X_MAX:");Serial.println(MAGN_X_MAX);
-         Serial.print("MAGN_Y_MIN:");Serial.println(MAGN_Y_MIN);
-         Serial.print("MAGN_Y_MAX:");Serial.println(MAGN_Y_MAX);
-         Serial.print("MAGN_Z_MIN:");Serial.println(MAGN_Z_MIN);
-         Serial.print("MAGN_Z_MAX:");Serial.println(MAGN_Z_MAX);
-         Serial.println("");
-         Serial.print("MAGN_USE_EXTENDED:");
+         LOG_PORT.print("ACCEL_X_MIN:");LOG_PORT.println(ACCEL_X_MIN);
+         LOG_PORT.print("ACCEL_X_MAX:");LOG_PORT.println(ACCEL_X_MAX);
+         LOG_PORT.print("ACCEL_Y_MIN:");LOG_PORT.println(ACCEL_Y_MIN);
+         LOG_PORT.print("ACCEL_Y_MAX:");LOG_PORT.println(ACCEL_Y_MAX);
+         LOG_PORT.print("ACCEL_Z_MIN:");LOG_PORT.println(ACCEL_Z_MIN);
+         LOG_PORT.print("ACCEL_Z_MAX:");LOG_PORT.println(ACCEL_Z_MAX);
+         LOG_PORT.println(""); 
+         LOG_PORT.print("MAGN_X_MIN:");LOG_PORT.println(MAGN_X_MIN);
+         LOG_PORT.print("MAGN_X_MAX:");LOG_PORT.println(MAGN_X_MAX);
+         LOG_PORT.print("MAGN_Y_MIN:");LOG_PORT.println(MAGN_Y_MIN);
+         LOG_PORT.print("MAGN_Y_MAX:");LOG_PORT.println(MAGN_Y_MAX);
+         LOG_PORT.print("MAGN_Z_MIN:");LOG_PORT.println(MAGN_Z_MIN);
+         LOG_PORT.print("MAGN_Z_MAX:");LOG_PORT.println(MAGN_Z_MAX);
+         LOG_PORT.println("");
+         LOG_PORT.print("MAGN_USE_EXTENDED:");
          if (CALIBRATION__MAGN_USE_EXTENDED) 
-           Serial.println("true");
+           LOG_PORT.println("true");
          else
-           Serial.println("false");
-         Serial.print("magn_ellipsoid_center:[");Serial.print(magn_ellipsoid_center[0],4);Serial.print(",");
-         Serial.print(magn_ellipsoid_center[1],4);Serial.print(",");
-         Serial.print(magn_ellipsoid_center[2],4);Serial.println("]");
-         Serial.print("magn_ellipsoid_transform:[");
+           LOG_PORT.println("false");
+         LOG_PORT.print("magn_ellipsoid_center:[");LOG_PORT.print(magn_ellipsoid_center[0],4);LOG_PORT.print(",");
+         LOG_PORT.print(magn_ellipsoid_center[1],4);LOG_PORT.print(",");
+         LOG_PORT.print(magn_ellipsoid_center[2],4);LOG_PORT.println("]");
+         LOG_PORT.print("magn_ellipsoid_transform:[");
          for(int i = 0; i < 3; i++){
-           Serial.print("[");
+           LOG_PORT.print("[");
            for(int j = 0; j < 3; j++){
-             Serial.print(magn_ellipsoid_transform[i][j],7);
-             if (j < 2) Serial.print(",");
+             LOG_PORT.print(magn_ellipsoid_transform[i][j],7);
+             if (j < 2) LOG_PORT.print(",");
            }
-           Serial.print("]");
-           if (i < 2) Serial.print(",");
+           LOG_PORT.print("]");
+           if (i < 2) LOG_PORT.print(",");
          }
-         Serial.println("]");
-         Serial.println(""); 
-         Serial.print("GYRO_AVERAGE_OFFSET_X:");Serial.println(GYRO_AVERAGE_OFFSET_X);
-         Serial.print("GYRO_AVERAGE_OFFSET_Y:");Serial.println(GYRO_AVERAGE_OFFSET_Y);
-         Serial.print("GYRO_AVERAGE_OFFSET_Z:");Serial.println(GYRO_AVERAGE_OFFSET_Z);
+         LOG_PORT.println("]");
+         LOG_PORT.println(""); 
+         LOG_PORT.print("GYRO_AVERAGE_OFFSET_X:");LOG_PORT.println(GYRO_AVERAGE_OFFSET_X);
+         LOG_PORT.print("GYRO_AVERAGE_OFFSET_Y:");LOG_PORT.println(GYRO_AVERAGE_OFFSET_Y);
+         LOG_PORT.print("GYRO_AVERAGE_OFFSET_Z:");LOG_PORT.println(GYRO_AVERAGE_OFFSET_Z);
       }
-      else if (command == 'c') // Set _i_nput mode
+	  else if (command == 'c') // Set _i_nput mode
       {
         char input_param = readChar();
         if (input_param == 'a')  // Calibrate _a_ccelerometer
         {
           char axis_param = readChar();
           char type_param = readChar();
-          float value_param = Serial.parseFloat();
+          float value_param = LOG_PORT.parseFloat();
           if (axis_param == 'x')  // x value
           {
             if (type_param == 'm')
@@ -686,7 +850,7 @@ void loop()
           CALIBRATION__MAGN_USE_EXTENDED = false;
           char axis_param = readChar();
           char type_param = readChar();
-          float value_param = Serial.parseFloat();
+          float value_param = LOG_PORT.parseFloat();
           if (axis_param == 'x')  // x value
           {
             if (type_param == 'm')
@@ -715,7 +879,7 @@ void loop()
           //enable extended magnetometer calibration
           CALIBRATION__MAGN_USE_EXTENDED = true;
           char axis_param = readChar();
-          float value_param = Serial.parseFloat();
+          float value_param = LOG_PORT.parseFloat();
           if (axis_param == 'x')  // x value
               magn_ellipsoid_center[0] = value_param;
           else if (axis_param == 'y')  // y value
@@ -729,7 +893,7 @@ void loop()
           CALIBRATION__MAGN_USE_EXTENDED = true;
           char axis_param = readChar();
           char type_param = readChar();
-          float value_param = Serial.parseFloat();
+          float value_param = LOG_PORT.parseFloat();
           if (axis_param == 'x')  // x value
           {
             if (type_param == 'X')
@@ -761,15 +925,24 @@ void loop()
         else if (input_param == 'g')  // Calibrate _g_yro 
         {
           char axis_param = readChar();
-          float value_param = Serial.parseFloat();
+          float value_param = LOG_PORT.parseFloat();
           if (axis_param == 'x')  // x value
               GYRO_AVERAGE_OFFSET_X = value_param;
           else if (axis_param == 'y')  // y value
               GYRO_AVERAGE_OFFSET_Y = value_param;
           else if (axis_param == 'z')  // z value
               GYRO_AVERAGE_OFFSET_Z = value_param;
-         }
+        }
       }
+	  else if (command == 'I') // Toggle _i_nertial-only mode for yaw computation
+	  {
+		DEBUG__NO_DRIFT_CORRECTION = !DEBUG__NO_DRIFT_CORRECTION;
+#if DEBUG__USE_ONLY_DMP_M0 == true
+		// Update reference for yaw...
+		initialmagyaw = -MAG_Heading;
+		initialimuyaw = imu.yaw*PI/180.0f;
+#endif // DEBUG__USE_ONLY_DMP_M0
+	  }
 #if OUTPUT__HAS_RN_BLUETOOTH == true
       // Read messages from bluetooth module
       // For this to work, the connect/disconnect message prefix of the module has to be set to "#".
@@ -786,6 +959,10 @@ void loop()
   // Time to read the sensors again?
   if((millis() - timestamp) >= OUTPUT__DATA_INTERVAL)
   {
+#if DEBUG__PRINT_LOOP_TIME_2 == true
+    LOG_PORT.print("loop time (ms) = ");
+    LOG_PORT.println(millis() - timestamp);
+#endif // DEBUG__PRINT_LOOP_TIME_2
     timestamp_old = timestamp;
     timestamp = millis();
     if (timestamp > timestamp_old)
@@ -804,13 +981,17 @@ void loop()
     {
       // Apply sensor calibration
       compensate_sensor_errors();
-    
+
+#if DEBUG__USE_ONLY_DMP_M0 == true
+	  Euler_angles_only_DMP_M0();
+#else
       // Run DCM algorithm
       Compass_Heading(); // Calculate magnetic heading
       Matrix_update();
       Normalize();
       Drift_correction();
       Euler_angles();
+#endif // DEBUG__USE_ONLY_DMP_M0
       
       if (output_stream_on || output_single_on) output_angles();
     }
@@ -819,12 +1000,16 @@ void loop()
       // Apply sensor calibration
       compensate_sensor_errors();
     
+#if DEBUG__USE_ONLY_DMP_M0 == true
+	  Euler_angles_only_DMP_M0();
+#else
       // Run DCM algorithm
       Compass_Heading(); // Calculate magnetic heading
       Matrix_update();
       Normalize();
       Drift_correction();
       Euler_angles();
+#endif // DEBUG__USE_ONLY_DMP_M0
       
       if (output_stream_on || output_single_on) output_both_angles_and_sensors_text();
     }
@@ -836,14 +1021,21 @@ void loop()
     output_single_on = false;
     
 #if DEBUG__PRINT_LOOP_TIME == true
-    Serial.print("loop time (ms) = ");
-    Serial.println(millis() - timestamp);
+    LOG_PORT.print("loop time (ms) = ");
+    LOG_PORT.println(millis() - timestamp);
 #endif
   }
 #if DEBUG__PRINT_LOOP_TIME == true
   else
   {
-    Serial.println("waiting...");
+    LOG_PORT.println("waiting...");
   }
+#else
+#if DEBUG__ADD_LOOP_DELAY == true
+  else
+  {
+	delay(DEBUG__LOOP_DELAY);
+  }
+#endif // DEBUG__ADD_LOOP_DELAY
 #endif
 }
