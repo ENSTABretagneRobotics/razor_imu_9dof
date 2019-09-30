@@ -9,14 +9,17 @@ Install and Configure ROS Package
 ---------------------------------
 1) Install dependencies:
 
-	$ sudo apt-get install python-visual
+	``$ sudo apt-get install python-visual``
 
 2) Download code:
 
-	$ cd ~/catkin_workspace/src
-	$ git clone https://github.com/KristofRobot/razor_imu_9dof.git
-	$ cd ..
-	$ catkin_make
+	``$ cd ~/catkin_workspace/src``
+
+	``$ git clone https://github.com/blmhemu/razor_imu_9dof.git``
+
+	``$ cd ..``
+	
+	``$ catkin_make``
 
 
 Install Arduino firmware
@@ -76,6 +79,26 @@ Publisher only with diagnostics:
 
 	$ roslaunch razor_imu_9dof razor-display.launch
 
+Conventions
+-----------
+
+The IMU follows ENU Convention.
+
+East  = 0 degree
+
+North = 90 degree
+
+West  = 180 degree / -180 degree
+
+South = -90 degree
+
+Accelerations and angular accelerations are also taken care of. (Right Hand Rule)
+
+This standard is in lines with ROS REP 105. This driver can be used for direct interfacing with robot_localization node.
+
+The setup used is shown below for reference
+
+![alt text](https://raw.githubusercontent.com/blmhemu/razor_imu_9dof/indigo-devel/razor.png)
 
 Calibrate
 ---------
