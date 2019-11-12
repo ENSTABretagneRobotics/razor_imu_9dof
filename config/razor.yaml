@@ -1,9 +1,7 @@
-## USB port
-port: /dev/ttyUSB0
+port: /dev/ttyACM0
+frame_header: "base_imu_link"
 
 
-##### Calibration ####
-### accelerometer
 accel_x_min: -250.0
 accel_x_max: 250.0
 accel_y_min: -250.0
@@ -11,8 +9,6 @@ accel_y_max: 250.0
 accel_z_min: -250.0
 accel_z_max: 250.0
 
-### magnetometer
-# standard calibration
 magn_x_min: -600.0
 magn_x_max: 600.0
 magn_y_min: -600.0
@@ -20,7 +16,9 @@ magn_y_max: 600.0
 magn_z_min: -600.0
 magn_z_max: 600.0
 
-# extended calibration
+publish_magnetometer: true
+
+# extended mag calibration
 calibration_magn_use_extended: false
 magn_ellipsoid_center: [0, 0, 0]
 magn_ellipsoid_transform: [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
@@ -28,7 +26,23 @@ magn_ellipsoid_transform: [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
 # AHRS to robot calibration
 imu_yaw_calibration: 0.0
 
-### gyroscope
 gyro_average_offset_x: 0.0
 gyro_average_offset_y: 0.0
 gyro_average_offset_z: 0.0
+
+# covariance
+orientation_covariance: [0.0025, 0,      0,
+                         0,      0.0025, 0,
+                         0,      0,      0.0025]
+
+velocity_covariance: [0.002, 0,     0,
+                      0,     0.002, 0,
+                      0,     0,     0.002]
+
+acceleration_covariance: [0.04, 0,    0,
+                          0,    0.04, 0,
+                          0,    0,    0.04]
+
+magnetic_field_covariance: [0.00, 0,    0,
+                            0,    0.00, 0,
+                            0,    0,    0.00]

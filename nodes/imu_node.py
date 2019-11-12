@@ -32,9 +32,14 @@ import serial
 import string
 import math
 import sys
+from time import sleep
+from lib.serial_commands import *
+import yaml
+import time
 
 #from time import time
 from sensor_msgs.msg import Imu
+from sensor_msgs.msg import MagneticField
 from tf.transformations import quaternion_from_euler
 from dynamic_reconfigure.server import Server
 from razor_imu_9dof.cfg import imuConfig
@@ -52,176 +57,163 @@ def reconfig_callback(config, level):
     rospy.loginfo("Set imu_yaw_calibration to %d" % (imu_yaw_calibration))
     return config
 
-rospy.init_node("razor_node")
+def send_command(serial_instance, command, value = None):
+    if value is None:
+        cmd = command + chr(13)
+    else:
+        cmd = command + str(value) + chr(13)
+    rospy.loginfo("Razor IMU -> Sending: %s", cmd)
+    expected_len = len(cmd)
+    res = serial_instance.write(cmd)
+    if (res != expected_len):
+        rospy.logerr("Razor IMU -> Expected serial command len (%d) didn't match amount of bytes written (%d) for command %s", expected_len, res, command)
+    sleep(0.05) # Don't spam serial with too many commands at once
+
+def write_and_check_config(serial_instance, calib_dict):
+    send_command(serial_instance, SET_CALIB_ACC_X_MIN, calib_dict["accel_x_min"])
+    send_command(serial_instance, SET_CALIB_ACC_X_MAX, calib_dict["accel_x_max"])
+    send_command(serial_instance, SET_CALIB_ACC_Y_MIN, calib_dict["accel_y_min"])
+    send_command(serial_instance, SET_CALIB_ACC_Y_MAX, calib_dict["accel_y_max"])
+    send_command(serial_instance, SET_CALIB_ACC_Z_MIN, calib_dict["accel_z_min"])
+    send_command(serial_instance, SET_CALIB_ACC_Z_MAX, calib_dict["accel_z_max"])
+
+    if not calib_dict["magn_use_extended"]:
+        send_command(serial_instance, SET_MAG_X_MIN, calib_dict["magn_x_min"])
+        send_command(serial_instance, SET_MAG_X_MAX, calib_dict["magn_x_max"])
+        send_command(serial_instance, SET_MAG_Y_MIN, calib_dict["magn_y_min"])
+        send_command(serial_instance, SET_MAG_Y_MAX, calib_dict["magn_y_max"])
+        send_command(serial_instance, SET_MAG_Z_MIN, calib_dict["magn_z_min"])
+        send_command(serial_instance, SET_MAG_Z_MAX, calib_dict["magn_z_max"])
+    else:
+        send_command(serial_instance, SET_MAG_ELLIPSOID_CENTER_0, calib_dict["magn_ellipsoid_center"][0])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_CENTER_1, calib_dict["magn_ellipsoid_center"][1])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_CENTER_2, calib_dict["magn_ellipsoid_center"][2])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_0_0, calib_dict["magn_ellipsoid_transform"][0][0])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_0_1, calib_dict["magn_ellipsoid_transform"][0][1])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_0_2, calib_dict["magn_ellipsoid_transform"][0][2])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_1_0, calib_dict["magn_ellipsoid_transform"][1][0])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_1_1, calib_dict["magn_ellipsoid_transform"][1][1])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_1_2, calib_dict["magn_ellipsoid_transform"][1][2])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_2_0, calib_dict["magn_ellipsoid_transform"][2][0])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_2_1, calib_dict["magn_ellipsoid_transform"][2][1])
+        send_command(serial_instance, SET_MAG_ELLIPSOID_TRANSFORM_2_2, calib_dict["magn_ellipsoid_transform"][2][2])
+
+    send_command(serial_instance, SET_GYRO_AVERAGE_OFFSET_X, calib_dict["gyro_average_offset_x"])
+    send_command(serial_instance, SET_GYRO_AVERAGE_OFFSET_Y, calib_dict["gyro_average_offset_y"])
+    send_command(serial_instance, SET_GYRO_AVERAGE_OFFSET_Z, calib_dict["gyro_average_offset_z"])
+
+    send_command(serial_instance, GET_CALIBRATION_VALUES)
+    config = ""
+    for _ in range(0, 21):
+        # Format each line received from serial into proper yaml with lowercase variable names
+        config += serial_instance.readline().lower().replace(":", ": ")
+        # TODO: round the numbers, otherwise we will get false negatives in the check phase
+
+    config_parsed = yaml.load(config)
+    for key in calib_dict:
+        if config_parsed[key] != calib_dict[key]:
+            rospy.logwarn("The calibration value of [%s] did not match. Expected: %s, received: %s",
+                          key, str(calib_dict[key]), str(config_parsed[key]))
+
+rospy.init_node("razor_imu")
 #We only care about the most recent measurement, i.e. queue_size=1
-pub = rospy.Publisher('imu', Imu, queue_size=1)
+pub_imu = rospy.Publisher('imu', Imu, queue_size=1)
 srv = Server(imuConfig, reconfig_callback)  # define dynamic_reconfigure callback
 diag_pub = rospy.Publisher('diagnostics', DiagnosticArray, queue_size=1)
-diag_pub_time = rospy.get_time();
+diag_pub_time = rospy.get_time()
 
 imuMsg = Imu()
+imuMsg.orientation_covariance = rospy.get_param('~orientation_covariance')
+imuMsg.angular_velocity_covariance = rospy.get_param('~velocity_covariance')
+imuMsg.linear_acceleration_covariance = rospy.get_param('~acceleration_covariance')
+imuMsg.header.frame_id = rospy.get_param('~frame_header', 'base_imu_link')
 
-# Orientation covariance estimation:
-# Observed orientation noise: 0.3 degrees in x, y, 0.6 degrees in z
-# Magnetometer linearity: 0.1% of full scale (+/- 2 gauss) => 4 milligauss
-# Earth's magnetic field strength is ~0.5 gauss, so magnetometer nonlinearity could
-# cause ~0.8% yaw error (4mgauss/0.5 gauss = 0.008) => 2.8 degrees, or 0.050 radians
-# i.e. variance in yaw: 0.0025
-# Accelerometer non-linearity: 0.2% of 4G => 0.008G. This could cause
-# static roll/pitch error of 0.8%, owing to gravity orientation sensing
-# error => 2.8 degrees, or 0.05 radians. i.e. variance in roll/pitch: 0.0025
-# so set all covariances the same.
-imuMsg.orientation_covariance = [
-0.0025 , 0 , 0,
-0, 0.0025, 0,
-0, 0, 0.0025
-]
+publish_magnetometer = rospy.get_param('~publish_magnetometer', False)
 
-# Angular velocity covariance estimation:
-# Observed gyro noise: 4 counts => 0.28 degrees/sec
-# nonlinearity spec: 0.2% of full scale => 8 degrees/sec = 0.14 rad/sec
-# Choosing the larger (0.14) as std dev, variance = 0.14^2 ~= 0.02
-imuMsg.angular_velocity_covariance = [
-0.02, 0 , 0,
-0 , 0.02, 0,
-0 , 0 , 0.02
-]
-
-# linear acceleration covariance estimation:
-# observed acceleration noise: 5 counts => 20milli-G's ~= 0.2m/s^2
-# nonliniarity spec: 0.5% of full scale => 0.2m/s^2
-# Choosing 0.2 as std dev, variance = 0.2^2 = 0.04
-imuMsg.linear_acceleration_covariance = [
-0.04 , 0 , 0,
-0 , 0.04, 0,
-0 , 0 , 0.04
-]
+if publish_magnetometer:
+    pub_mag = rospy.Publisher('mag', MagneticField, queue_size=1)
+    magMsg = MagneticField()
+    magMsg.magnetic_field_covariance = rospy.get_param('~magnetic_field_covariance')
+    magMsg.header.frame_id = rospy.get_param('~frame_header', 'base_imu_link')
+    #should a separate diagnostic for the Magnetometer should be done?
 
 default_port='/dev/ttyUSB0'
 port = rospy.get_param('~port', default_port)
 
 #read calibration parameters
-port = rospy.get_param('~port', default_port)
+
+calib_dict = {}
 
 #accelerometer
-accel_x_min = rospy.get_param('~accel_x_min', -250.0)
-accel_x_max = rospy.get_param('~accel_x_max', 250.0)
-accel_y_min = rospy.get_param('~accel_y_min', -250.0)
-accel_y_max = rospy.get_param('~accel_y_max', 250.0)
-accel_z_min = rospy.get_param('~accel_z_min', -250.0)
-accel_z_max = rospy.get_param('~accel_z_max', 250.0)
+calib_dict["accel_x_min"] = rospy.get_param('~accel_x_min', -250.0)
+calib_dict["accel_x_max"] = rospy.get_param('~accel_x_max', 250.0)
+calib_dict["accel_y_min"] = rospy.get_param('~accel_y_min', -250.0)
+calib_dict["accel_y_max"] = rospy.get_param('~accel_y_max', 250.0)
+calib_dict["accel_z_min"] = rospy.get_param('~accel_z_min', -250.0)
+calib_dict["accel_z_max"] = rospy.get_param('~accel_z_max', 250.0)
 
 # magnetometer
-magn_x_min = rospy.get_param('~magn_x_min', -600.0)
-magn_x_max = rospy.get_param('~magn_x_max', 600.0)
-magn_y_min = rospy.get_param('~magn_y_min', -600.0)
-magn_y_max = rospy.get_param('~magn_y_max', 600.0)
-magn_z_min = rospy.get_param('~magn_z_min', -600.0)
-magn_z_max = rospy.get_param('~magn_z_max', 600.0)
-calibration_magn_use_extended = rospy.get_param('~calibration_magn_use_extended', False)
-magn_ellipsoid_center = rospy.get_param('~magn_ellipsoid_center', [0, 0, 0])
-magn_ellipsoid_transform = rospy.get_param('~magn_ellipsoid_transform', [[0, 0, 0], [0, 0, 0], [0, 0, 0]])
-imu_yaw_calibration = rospy.get_param('~imu_yaw_calibration', 0.0)
+calib_dict["magn_x_min"] = rospy.get_param('~magn_x_min', -600.0)
+calib_dict["magn_x_max"] = rospy.get_param('~magn_x_max', 600.0)
+calib_dict["magn_y_min"] = rospy.get_param('~magn_y_min', -600.0)
+calib_dict["magn_y_max"] = rospy.get_param('~magn_y_max', 600.0)
+calib_dict["magn_z_min"] = rospy.get_param('~magn_z_min', -600.0)
+calib_dict["magn_z_max"] = rospy.get_param('~magn_z_max', 600.0)
+calib_dict["magn_use_extended"] = rospy.get_param('~calibration_magn_use_extended', False)
+calib_dict["magn_ellipsoid_center"] = rospy.get_param('~magn_ellipsoid_center', [0, 0, 0])
+calib_dict["magn_ellipsoid_transform"] = rospy.get_param('~magn_ellipsoid_transform', [[0, 0, 0], [0, 0, 0], [0, 0, 0]])
 
 # gyroscope
-gyro_average_offset_x = rospy.get_param('~gyro_average_offset_x', 0.0)
-gyro_average_offset_y = rospy.get_param('~gyro_average_offset_y', 0.0)
-gyro_average_offset_z = rospy.get_param('~gyro_average_offset_z', 0.0)
+calib_dict["gyro_average_offset_x"] = rospy.get_param('~gyro_average_offset_x', 0.0)
+calib_dict["gyro_average_offset_y"] = rospy.get_param('~gyro_average_offset_y', 0.0)
+calib_dict["gyro_average_offset_z"] = rospy.get_param('~gyro_average_offset_z', 0.0)
 
-#rospy.loginfo("%f %f %f %f %f %f", accel_x_min, accel_x_max, accel_y_min, accel_y_max, accel_z_min, accel_z_max)
-#rospy.loginfo("%f %f %f %f %f %f", magn_x_min, magn_x_max, magn_y_min, magn_y_max, magn_z_min, magn_z_max)
-#rospy.loginfo("%s %s %s", str(calibration_magn_use_extended), str(magn_ellipsoid_center), str(magn_ellipsoid_transform[0][0]))
-#rospy.loginfo("%f %f %f", gyro_average_offset_x, gyro_average_offset_y, gyro_average_offset_z)
+imu_yaw_calibration = rospy.get_param('~imu_yaw_calibration', 0.0)
 
 # Check your COM port and baud rate
-rospy.loginfo("Opening %s...", port)
-try:
-    ser = serial.Serial(port=port, baudrate=57600, timeout=1)
-except serial.serialutil.SerialException:
-    rospy.logerr("IMU not found at port "+port + ". Did you specify the correct port in the launch file?")
-    #exit
-    sys.exit(0)
+rospy.loginfo("Razor IMU -> Opening %s...", port)
+connection_attempts = 5
+for connection_tries in range (0,connection_attempts + 1):
+    try:
+        ser = serial.Serial(port=port, baudrate=57600, timeout=1)
+        break
+    except serial.serialutil.SerialException:
+        rospy.logerr("Razor IMU not found at port " + port + ". Did you specify the correct port in the launch file? Trying %d more times...", 5 -  connection_tries)
+        
+    if connection_tries == connection_attempts:
+        #exit
+        sys.exit(0)
+    time.sleep(3)
 
 roll=0
 pitch=0
 yaw=0
 seq=0
 accel_factor = 9.806 / 256.0    # sensor reports accel as 256.0 = 1G (9.8m/s^2). Convert to m/s^2.
-rospy.loginfo("Giving the razor IMU board 5 seconds to boot...")
-rospy.sleep(5) # Sleep for 5 seconds to wait for the board to boot
+
 
 ### configure board ###
 #stop datastream
-ser.write('#o0' + chr(13))
+send_command(ser, STOP_DATASTREAM)
+write_and_check_config(ser, calib_dict)
 
-#discard old input
-#automatic flush - NOT WORKING
-#ser.flushInput()  #discard old input, still in invalid format
-#flush manually, as above command is not working
-discard = ser.readlines() 
-
-#set output mode
-ser.write('#ox' + chr(13)) # To start display angle and sensor reading in text
-
-rospy.loginfo("Writing calibration values to razor IMU board...")
-#set calibration values
-ser.write('#caxm' + str(accel_x_min) + chr(13))
-ser.write('#caxM' + str(accel_x_max) + chr(13))
-ser.write('#caym' + str(accel_y_min) + chr(13))
-ser.write('#cayM' + str(accel_y_max) + chr(13))
-ser.write('#cazm' + str(accel_z_min) + chr(13))
-ser.write('#cazM' + str(accel_z_max) + chr(13))
-
-if (not calibration_magn_use_extended):
-    ser.write('#cmxm' + str(magn_x_min) + chr(13))
-    ser.write('#cmxM' + str(magn_x_max) + chr(13))
-    ser.write('#cmym' + str(magn_y_min) + chr(13))
-    ser.write('#cmyM' + str(magn_y_max) + chr(13))
-    ser.write('#cmzm' + str(magn_z_min) + chr(13))
-    ser.write('#cmzM' + str(magn_z_max) + chr(13))
+if publish_magnetometer:
+    send_command(ser, SET_TEXT_EXTENDED_FORMAT_WITH_MAG)
+    line_start = LINE_START_WITH_MAG
 else:
-    ser.write('#ccx' + str(magn_ellipsoid_center[0]) + chr(13))
-    ser.write('#ccy' + str(magn_ellipsoid_center[1]) + chr(13))
-    ser.write('#ccz' + str(magn_ellipsoid_center[2]) + chr(13))
-    ser.write('#ctxX' + str(magn_ellipsoid_transform[0][0]) + chr(13))
-    ser.write('#ctxY' + str(magn_ellipsoid_transform[0][1]) + chr(13))
-    ser.write('#ctxZ' + str(magn_ellipsoid_transform[0][2]) + chr(13))
-    ser.write('#ctyX' + str(magn_ellipsoid_transform[1][0]) + chr(13))
-    ser.write('#ctyY' + str(magn_ellipsoid_transform[1][1]) + chr(13))
-    ser.write('#ctyZ' + str(magn_ellipsoid_transform[1][2]) + chr(13))
-    ser.write('#ctzX' + str(magn_ellipsoid_transform[2][0]) + chr(13))
-    ser.write('#ctzY' + str(magn_ellipsoid_transform[2][1]) + chr(13))
-    ser.write('#ctzZ' + str(magn_ellipsoid_transform[2][2]) + chr(13))
+    send_command(ser, SET_TEXT_EXTENDED_FORMAT_NO_MAG)
+    line_start = LINE_START_NO_MAG
 
-ser.write('#cgx' + str(gyro_average_offset_x) + chr(13))
-ser.write('#cgy' + str(gyro_average_offset_y) + chr(13))
-ser.write('#cgz' + str(gyro_average_offset_z) + chr(13))
+send_command(ser, START_DATASTREAM)
 
-#print calibration values for verification by user
-ser.flushInput()
-ser.write('#p' + chr(13))
-calib_data = ser.readlines()
-calib_data_print = "Printing set calibration values:\r\n"
-for line in calib_data:
-    calib_data_print += line
-rospy.loginfo(calib_data_print)
-
-#start datastream
-ser.write('#o1' + chr(13))
-
-#automatic flush - NOT WORKING
-#ser.flushInput()  #discard old input, still in invalid format
-#flush manually, as above command is not working - it breaks the serial connection
-rospy.loginfo("Flushing first 200 IMU entries...")
-for x in range(0, 200):
-    line = ser.readline()
-rospy.loginfo("Publishing IMU data...")
-#f = open("raw_imu_data.log", 'w')
+rospy.loginfo("Razor IMU up and running")
 
 while not rospy.is_shutdown():
     line = ser.readline()
-    line = line.replace("#YPRAG=","")   # Delete "#YPRAG="
-    #f.write(line)                     # Write to the output log file
+    if not line.startswith(line_start):
+        rospy.logerr_throttle(1, "Did not find correct line start in the received IMU message")
+        continue
+    line = line.replace(line_start,"")   # Delete "#YPRAG=" or "#YPRAGM="
     words = string.split(line,",")    # Fields split
     if len(words) > 2:
         #in AHRS firmware z axis points down, in ROS z axis points up (see REP 103)
@@ -246,8 +238,21 @@ while not rospy.is_shutdown():
         imuMsg.angular_velocity.x = float(words[6])
         #in AHRS firmware y axis points right, in ROS y axis points left (see REP 103)
         imuMsg.angular_velocity.y = -float(words[7])
-        #in AHRS firmware z axis points down, in ROS z axis points up (see REP 103) 
+        #in AHRS firmware z axis points down, in ROS z axis points up (see REP 103)
         imuMsg.angular_velocity.z = -float(words[8])
+
+        if publish_magnetometer:
+            #according to line 178 the units published of the mag are mGauss
+            #REP103 specifys the units of magnetic field to be Teslas
+            #The axis of the MPU magnetometer are X forward, Y right and Z down
+            #  when the chip is facing forward, in the sparkfun board, the chip is facing the left side
+            # but Sparkfun the firmware interchanges x and y and changes the sign of y
+            # so to get it to REP103 we need to make X and Z negative
+            #The magn frames form sparkfun can be seen in line 178 from Sensors.ino
+            magMsg.magnetic_field.x = float(words[9]) * 1e-7
+            magMsg.magnetic_field.y = -float(words[10]) * 1e-7
+            magMsg.magnetic_field.z = -float(words[11]) * 1e-7
+            #check frame orientation and units
 
     q = quaternion_from_euler(roll,pitch,yaw)
     imuMsg.orientation.x = q[0]
@@ -255,10 +260,14 @@ while not rospy.is_shutdown():
     imuMsg.orientation.z = q[2]
     imuMsg.orientation.w = q[3]
     imuMsg.header.stamp= rospy.Time.now()
-    imuMsg.header.frame_id = 'base_imu_link'
     imuMsg.header.seq = seq
     seq = seq + 1
-    pub.publish(imuMsg)
+    pub_imu.publish(imuMsg)
+
+    if publish_magnetometer:
+        magMsg.header.stamp = imuMsg.header.stamp
+        magMsg.header.seq = imuMsg.header.seq
+        pub_mag.publish(magMsg)
 
     if (diag_pub_time < rospy.get_time()) :
         diag_pub_time += 1
@@ -280,4 +289,3 @@ while not rospy.is_shutdown():
         diag_pub.publish(diag_arr)
         
 ser.close
-#f.close

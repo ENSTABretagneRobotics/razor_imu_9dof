@@ -143,6 +143,12 @@
               velocity is in rad/s. (Output frames have form like
               "#YPRAG=-142.28,-5.38,33.52,0.1,0.1,1.0,0.01,0.01,0.01",
               followed by carriage return and line feed [\r\n]).
+      "#om" - Output angles and linear acceleration, rotational
+              velocity and magnetic field. Angles are in degrees, acceleration is
+              in units of 1.0 = 1/256 G (9.8/256 m/s^2). Rotational
+              velocity is in rad/s. (Output frames have form like
+              "#YPRAGM=-142.28,-5.38,33.52,0.1,0.1,1.0,0.01,0.01,0.01,1.0,2.0,3.0",
+              followed by carriage return and line feed [\r\n]).
      
       // Sensor calibration
       "#oc" - Go to CALIBRATION output mode.
@@ -208,7 +214,7 @@
 // Select your hardware here by uncommenting one line!
 //#define HW__VERSION_CODE 10125 // SparkFun "9DOF Razor IMU" version "SEN-10125" (HMC5843 magnetometer)
 //#define HW__VERSION_CODE 10736 // SparkFun "9DOF Razor IMU" version "SEN-10736" (HMC5883L magnetometer)
-//#define HW__VERSION_CODE 14001 // SparkFun "9DoF Razor IMU M0" version "SEN-14001"
+#define HW__VERSION_CODE 14001 // SparkFun "9DoF Razor IMU M0" version "SEN-14001"
 //#define HW__VERSION_CODE 10183 // SparkFun "9DOF Sensor Stick" version "SEN-10183" (HMC5843 magnetometer)
 //#define HW__VERSION_CODE 10321 // SparkFun "9DOF Sensor Stick" version "SEN-10321" (HMC5843 magnetometer)
 //#define HW__VERSION_CODE 10724 // SparkFun "9DOF Sensor Stick" version "SEN-10724" (HMC5883L magnetometer)
@@ -238,6 +244,7 @@
 #define OUTPUT__MODE_SENSORS_RAW 3 // Outputs raw (uncalibrated) sensor values for all 9 axes
 #define OUTPUT__MODE_SENSORS_BOTH 4 // Outputs calibrated AND raw sensor values for all 9 axes
 #define OUTPUT__MODE_ANGLES_AG_SENSORS 5 // Outputs yaw/pitch/roll in degrees + linear accel + rot. vel
+#define OUTPUT__MODE_ANGLES_AGM_SENSORS 6 // Outputs yaw/pitch/roll in degrees + linear accel + rot. vel + magnetometer data
 // Output format definitions (do not change)
 #define OUTPUT__FORMAT_TEXT 0 // Outputs data as text
 #define OUTPUT__FORMAT_BINARY 1 // Outputs data as binary float
@@ -629,12 +636,25 @@ char readChar()
 
 void setup()
 {
-  // Init serial output
-  LOG_PORT.begin(OUTPUT__BAUD_RATE);
-  
   // Init status LED
   pinMode (STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
+  double time_old = 0;
+  // Init serial output
+  LOG_PORT.end();
+  delay(50);
+  LOG_PORT.begin(OUTPUT__BAUD_RATE);
+  while(!LOG_PORT){
+    if (millis() - time_old > 10000){
+      time_old = millis();
+      digitalWrite(STATUS_LED_PIN, HIGH);
+      delay(50);
+      #if HW__VERSION_CODE == 14001
+        NVIC_SystemReset();      // processor software reset
+      #endif
+      } 
+    }
+  
 
   // Init sensors
   delay(50);  // Give sensors enough time to start
@@ -672,6 +692,9 @@ void loop()
 {
   // Read incoming control messages
  #if HW__VERSION_CODE == 14001
+  if (!LOG_PORT)
+    NVIC_SystemReset();      // processor software reset
+    
   // Compatibility fix : if bytes are sent 1 by 1 without being read, available() might never return more than 1...
   // Therefore, we need to read bytes 1 by 1 and the command byte needs to be a blocking read...
   if (LOG_PORT.available() >= 1)
@@ -726,6 +749,11 @@ void loop()
         else if (output_param == 'x') // Output angles + accel + rot. vel as te_x_t
         {
           output_mode = OUTPUT__MODE_ANGLES_AG_SENSORS;
+          output_format = OUTPUT__FORMAT_TEXT;
+        }
+        else if (output_param == 'm') // Output angles + accel + rot. vel as te_x_t
+        {
+          output_mode = OUTPUT__MODE_ANGLES_AGM_SENSORS;
           output_format = OUTPUT__FORMAT_TEXT;
         }
         else if (output_param == 's') // Output _s_ensor values
@@ -1012,6 +1040,24 @@ void loop()
 #endif // DEBUG__USE_ONLY_DMP_M0
       
       if (output_stream_on || output_single_on) output_both_angles_and_sensors_text();
+    }
+    else if (output_mode == OUTPUT__MODE_ANGLES_AGM_SENSORS)  // Output angles + accel + rot. vel
+    {
+      // Apply sensor calibration
+      compensate_sensor_errors();
+    
+#if DEBUG__USE_ONLY_DMP_M0 == true
+    Euler_angles_only_DMP_M0();
+#else
+      // Run DCM algorithm
+      Compass_Heading(); // Calculate magnetic heading
+      Matrix_update();
+      Normalize();
+      Drift_correction();
+      Euler_angles();
+#endif // DEBUG__USE_ONLY_DMP_M0
+      
+      if (output_stream_on || output_single_on) output_both_angles_and_all_sensors_text();
     }
     else  // Output sensor values
     {      
